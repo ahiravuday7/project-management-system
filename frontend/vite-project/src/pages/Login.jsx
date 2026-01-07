@@ -10,12 +10,10 @@ function Login() {
   const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
-    console.log("this is handle submit call");
     e.preventDeafault();
     setError("");
 
     try {
-      console.log("this is try block");
       const res = await api.post("/auth/login", { email, password });
       sessionStorage.setItem("token", res.data.token);
       sessionStorage.setItem("user", JSON.stringify(res.data.user));
