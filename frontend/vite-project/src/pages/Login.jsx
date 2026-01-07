@@ -10,15 +10,13 @@ function Login() {
   const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
-    e.preventDeafault();
+    e.preventDefault();
     setError("");
-
     try {
       const res = await api.post("/auth/login", { email, password });
       sessionStorage.setItem("token", res.data.token);
       sessionStorage.setItem("user", JSON.stringify(res.data.user));
-
-      // navigate("/dashboard");
+      navigate("/dashboard");
     } catch (error) {
       setError(error.response?.data?.message || "Login failed");
     }
