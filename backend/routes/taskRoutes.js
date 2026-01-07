@@ -18,7 +18,7 @@ const router = express.Router();
 router.post("/", protect, createTask);
 
 // get tasks
-router.get("/:id", protect, getTasks);
+router.get("/:boardId", protect, getTasks);
 
 // update a task
 router.put("/:id", protect, updateTask);

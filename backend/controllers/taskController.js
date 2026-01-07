@@ -29,6 +29,7 @@ exports.createTask = async (req, res) => {
 // GET: /api/tasks/:boardId
 exports.getTasks = async (req, res) => {
   try {
+    console.log(req.params);
     const tasks = await Task.find({
       boardId: req.params.boardId,
     })
