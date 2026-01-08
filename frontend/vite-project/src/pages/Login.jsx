@@ -1,9 +1,12 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
+import { loginSuccess } from "../store/authSlice";
 import api from "../api/axios";
 
 function Login() {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,6 +17,9 @@ function Login() {
     setError("");
     try {
       const res = await api.post("/auth/login", { email, password });
+
+      dispatch(loginSuccess({ user: res.data.user, token: res.data.token }));
+
       sessionStorage.setItem("token", res.data.token);
       sessionStorage.setItem("user", JSON.stringify(res.data.user));
       navigate("/dashboard");
