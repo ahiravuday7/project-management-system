@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/axios";
 
-function Registration() {
+function Register() {
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -68,4 +68,4 @@ function Registration() {
   );
 }
 
-export default Registration;
+export default Register;
