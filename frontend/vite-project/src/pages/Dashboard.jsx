@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
 import api from "../api/axios";
+import socket from "../socket";
+
+import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 
 const Dashboard = () => {
   const [boards, setBoards] = useState([]);
@@ -19,8 +22,11 @@ const Dashboard = () => {
   const [showTaskModel, setShowTaskModel] = useState(false);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
-  const [assignee, setAssignee] = useState("");
+  const [assignedTo, setAssignedTo] = useState("");
   const [activeColumnId, setActiveColumnId] = useState(null);
+
+  const [showColumnModal, setShowColumnModal] = useState(false);
+  const [columnName, setColumnName] = useState("");
 
   // Toast Notification
   const [toast, setToast] = useState({
@@ -57,14 +63,36 @@ const Dashboard = () => {
         ]);
         setColumns(colRes.data);
         setTasks(taskRes.data);
-      } catch (error) {
+      } catch {
         setError(`Failed to load board data`);
       } finally {
         setTaskLoading(false);
       }
     };
     fetchBoardData();
+    socket.emit("joinBoard", selectedBoard._id);
   }, [selectedBoard]);
+
+  // listen to task events
+  useEffect(() => {
+    socket.on("taskCreated", (task) => {
+      // setTasks((prev) => [...prev, task]);
+      setTasks((prev) => {
+        const exists = prev.some((t) => t._id === task._id);
+        if (exists) return prev;
+        return [...prev, task];
+      });
+    });
+    socket.on("taskUpdated", (updatedTask) => {
+      setTasks((prev) =>
+        prev.map((task) => (task._id === updatedTask._id ? updatedTask : task))
+      );
+    });
+    return () => {
+      socket.off("taskCreated");
+      socket.off("taskUpdated");
+    };
+  }, []);
 
   // Create a new board
   const handleCreateBoard = async () => {
@@ -85,10 +113,10 @@ const Dashboard = () => {
       setBoardName("");
       setBoardDescription("");
       setShowModal(false);
-    } catch (error) {
+    } catch {
       setToast({
         show: true,
-        message: `Failed to create board: ${error.message}`,
+        message: `Failed to create board!`,
         type: "danger",
       });
     }
@@ -99,35 +127,117 @@ const Dashboard = () => {
     }, 3000);
   };
 
+  // Create column handler
+  const handleCreateColumn = async () => {
+    if (!columnName.trim() || !selectedBoard) return;
+
+    try {
+      const res = await api.post("/columns", {
+        name: columnName,
+        boardId: selectedBoard._id,
+      });
+
+      setColumns((prev) => [...prev, res.data]);
+      // clear the columns field
+      setColumnName("");
+      setShowColumnModal(false);
+    } catch (error) {
+      setToast({
+        show: true,
+        message: `Failed to create column!`,
+        type: "danger",
+      });
+    }
+    // auto close the toast after 3 seconds
+    setTimeout(() => {
+      setToast({ ...toast, show: false });
+    }, 3000);
+  };
+
   // Filter tasks by column
   const getTasksByColumn = (columnId) => {
     return tasks.filter((task) => task.columnId === columnId);
+
+    // const showToast = (message, type = "success") => {
+    //   setToast({ show: true, message, type });
+    //   setTimeout(() => setToast({ show: false }), 3000);
+    // };
   };
 
   //create task handler (create task in column)
-  const handleCreateTask = async (columnId) => {
-    if (!taskTitle.trim()) return;
+  const handleCreateTask = async () => {
+    if (!taskTitle.trim() || !activeColumnId) return;
 
     try {
       const res = await api.post("/tasks", {
         title: taskTitle,
         description: taskDescription,
-        assignee,
+        assignedTo: assignedTo ? assignedTo._id : null,
         boardId: selectedBoard._id,
         columnId: activeColumnId,
       });
-      setTasks((prev) => [...prev, res.data]);
+      // setTasks((prev) => [...prev, res.data]);
 
       // reset task
       setTaskTitle("");
       setTaskDescription("");
-      setAssignee("");
+      setAssignedTo("");
       setActiveColumnId(null);
       setShowModal(false);
-    } catch (error) {
+      setShowTaskModel(false);
+    } catch {
       setToast({
         show: true,
         message: `Failed to create task!`,
+        type: "danger",
+      });
+    }
+  };
+
+  // ADD Drag handler
+  const onDragEnd = async (result) => {
+    const { source, destination, draggableId } = result;
+
+    // dropped outside
+    if (!destination) return;
+
+    // if dropped in the same position
+    if (
+      source.droppableId === destination.droppableId &&
+      source.index === destination.index
+    ) {
+      return;
+    }
+
+    // find dragged task
+    const movedTask = tasks.find((t) => t._id === draggableId);
+
+    // if task is not found
+    if (!movedTask) return;
+
+    // optimistic UI update
+    setTasks((prev) =>
+      prev.map((task) =>
+        task._id === draggableId
+          ? { ...task, columnId: destination.droppableId }
+          : task
+      )
+    );
+
+    // update task in backend
+    try {
+      await api.put(`/tasks/${draggableId}`, {
+        columnId: destination.droppableId,
+      });
+      // notify other via socket
+      socket.emit("taskMoved", {
+        taskId: draggableId,
+        ColumnId: destination.droppableId,
+      });
+    } catch (error) {
+      setToast({
+        show: true,
+        message: `Failed to move task!`,
         type: "danger",
       });
     }
@@ -182,48 +292,98 @@ const Dashboard = () => {
               <h4>{selectedBoard.name}</h4>
               <p className="text-muted">{selectedBoard.description}</p>
 
-              {/* {design to get column and tasks} */}
-              <div className="row mt-3">
-                {columns.map((col) => (
-                  <div className="col-4" key={col._id}>
-                    <div className="card">
-                      <div className="card-header fw-bold text-center">
-                        {col.name}
-                      </div>
-                      <div className="card-body" style={{ minHeight: "300px" }}>
-                        {/* {Create a button to add a task} */}
-                        <button
-                          className="btn btn-sm btn-outline-primary w-100 mb-3"
-                          onClick={() => {
-                            setActiveColumnId(col._id);
-                            setShowTaskModel(true);
-                          }}
-                        >
-                          + Add Task
-                        </button>
-                        {taskLoading ? (
-                          <p className="text-center text-muted">
-                            Loading tasks...
-                          </p>
-                        ) : getTasksByColumn(col._id).length === 0 ? (
-                          <p className="text-center text-muted">
-                            No tasks found
-                          </p>
-                        ) : (
-                          getTasksByColumn(col._id).map((task) => (
-                            <div key={task._id} className="card mb-2 shadow-sm">
-                              <div className="card-body p-2">
-                                <h6 className="mb-1">{task.title}</h6>
-                                <p className="text-muted">{task.description}</p>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              {/* {Create a button to add a column} */}
+              <div className="d-flex justify-content-end mb-3">
+                <button
+                  className="btn btn-outline-primary"
+                  onClick={() => setShowColumnModal(true)}
+                >
+                  + Add Column
+                </button>
               </div>
+
+              {/* {design to get column and tasks} */}
+
+              <DragDropContext onDragEnd={onDragEnd}>
+                <div className="row mt-3">
+                  {columns.map((col) => (
+                    <div className="col-4" key={col._id}>
+                      <Droppable droppableId={col._id}>
+                        {(provided) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.droppableProps}
+                            className="card"
+                          >
+                            <div className="card-header d-flex justify-content-between fw-bold text-center">
+                              {col.name}
+                            </div>
+                            <div
+                              className="card-body"
+                              style={{ minHeight: "300px" }}
+                            >
+                              {/* {Create a button to add a task} */}
+                              <button
+                                className="btn btn-sm btn-outline-primary w-100 mb-3"
+                                onClick={() => {
+                                  setActiveColumnId(col._id);
+                                  setShowTaskModel(true);
+                                }}
+                              >
+                                + Add Task
+                              </button>
+
+                              {taskLoading ? (
+                                <p className="text-center text-muted">
+                                  Loading tasks...
+                                </p>
+                              ) : getTasksByColumn(col._id).length === 0 ? (
+                                <p className="text-center text-muted">
+                                  No tasks found
+                                </p>
+                              ) : (
+                                getTasksByColumn(col._id).map((task, index) => (
+                                  <Draggable
+                                    key={task._id}
+                                    draggableId={task._id}
+                                    index={index}
+                                    className="card mb-2 shadow-sm"
+                                  >
+                                    {(provided) => (
+                                      <div
+                                        ref={provided.innerRef}
+                                        {...provided.draggableProps}
+                                        {...provided.dragHandleProps}
+                                        className="card mb-2 shadow-sm"
+                                      >
+                                        <div className="card-body p-2">
+                                          <h6 className="mb-1">{task.title}</h6>
+                                          <small className="text-muted">
+                                            {task.description}
+                                          </small>
+                                          <br />
+                                          <small className="text-secondary">
+                                            {task.assignedTo?.name ||
+                                              "Unassigned"}
+                                            <br />
+                                            {task.assignedTo?.email ||
+                                              "Unassigned"}
+                                          </small>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </Draggable>
+                                ))
+                              )}
+                              {provided.placeholder}
+                            </div>
+                          </div>
+                        )}
+                      </Droppable>
+                    </div>
+                  ))}
+                </div>
+              </DragDropContext>
             </>
           )}
         </div>
@@ -279,6 +439,107 @@ const Dashboard = () => {
           </div>
         )}
       </div>
+
+      {/* {create column model UI logic} */}
+      {showColumnModal && (
+        <div className="modal fade show d-block" tabIndex="-1">
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Create Column</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowColumnModal(false)}
+                ></button>
+              </div>
+
+              <div className="modal-body">
+                <input
+                  type="text"
+                  className="form-control"
+                  value={columnName}
+                  placeholder="Column Name"
+                  onChange={(e) => setColumnName(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowColumnModal(false)}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  className="btn btn-primary ms-2"
+                  onClick={handleCreateColumn}
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* {create task model UI} */}
+      {showTaskModel && (
+        <div className="modal fade show d-block" tabIndex={-1}>
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Create Task</h5>
+
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowTaskModel(false)}
+                ></button>
+              </div>
+
+              <div className="modal-body">
+                <input
+                  type="text"
+                  className="form-control mb-2"
+                  value={taskTitle}
+                  placeholder="Task Title"
+                  onChange={(e) => setTaskTitle(e.target.value)}
+                />
+
+                <textarea
+                  className="form-control mb-2"
+                  placeholder="Task Description"
+                  rows="3"
+                  value={taskDescription}
+                  onChange={(e) => setTaskDescription(e.target.value)}
+                ></textarea>
+
+                <input
+                  className="form-control"
+                  placeholder="Assignee (email or name)"
+                  value={assignedTo}
+                  onChange={(e) => setAssignedTo(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowTaskModel(false)}
+                >
+                  Cancel
+                </button>
+
+                <button className="btn btn-primary" onClick={handleCreateTask}>
+                  Create Task
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* {Display toast} */}
       {toast.show && (

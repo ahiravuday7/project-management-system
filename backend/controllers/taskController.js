@@ -5,21 +5,30 @@ const { getIo } = require("../socket/socket");
 // POST: /api/tasks
 exports.createTask = async (req, res) => {
   const { title, description, boardId, columnId, assignedTo } = req.body;
+
+  if (!title || !boardId || !columnId) {
+    return res
+      .status(400)
+      .json({ message: "Title, boardId, and columnId are required" });
+  }
   try {
     const task = await Task.create({
       title,
       description,
       boardId,
       columnId,
-      assignedTo,
+      assignedTo: assignedTo || null,
       createdBy: req.user.id,
     });
 
+    // populate before sending to client
+    const populatedTask = await task.populate("assignedTo", "name email");
+
     // socket EMIT
     const io = getIo();
-    io.to(boardId).emit("taskCreated", task);
+    io.to(boardId).emit("taskCreated", populatedTask);
 
-    res.status(201).json(task);
+    res.status(201).json(populatedTask);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
